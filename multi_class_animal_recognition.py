@@ -34,8 +34,16 @@ if len(physical_devices) > 0:
 else:
   print("gpu is not used")
 
-# path to data set
-dataset_path = "/root/.cache/kagglehub/datasets/iamsouravbanerjee/animal-image-dataset-90-different-animals/versions/5/animals/animals"
+import kagglehub
+import os
+
+# Download latest version
+path = kagglehub.dataset_download("iamsouravbanerjee/animal-image-dataset-90-different-animals")
+
+print("Path to dataset files:", path)
+
+# Update dataset_path to the correct location using the downloaded path
+dataset_path = os.path.join(path, "animals", "animals")  # Assuming the dataset is in 'animals/animals' within the downloaded path
 
 #list all the class of animal types
 classes = os.listdir(dataset_path)
@@ -64,3 +72,134 @@ for i , class_name in enumerate(classes[:30]):
   plt.axis('off')
   plt.tight_layout()
 plt.show()
+
+#pre processing the data
+#define the image size and batch_size-Trained model - MobileNetV2- 224*224
+
+image_size = (224,224)
+batch_size = 64 # there can be 64 imaeg in a batch
+
+#data augementation and preprocesssing
+datagen = ImageDataGenerator(
+    rescale=1./255,        # we need to rescale this image to get its colour as colour range betn(0,255)
+    validation_split = 0.1   # to check my model is performing good or not
+)
+
+#training and validation generator
+train_generator = datagen.flow_from_directory(
+    dataset_path,
+    target_size = image_size,
+    batch_size = batch_size,
+    class_mode  = 'categorical',
+    subset = 'training'
+)
+validation_generator = datagen.flow_from_directory(
+    dataset_path,
+    target_size = image_size,
+    batch_size = batch_size,
+    class_mode = 'categorical',
+    subset = 'validation'
+)
+
+# map the classes - class_indices
+class_indices = train_generator.class_indices
+print(class_indices)
+
+#extract the class manes
+class_names = list(class_indices.keys())
+print("class_names: ", class_names)
+
+#Load MobileNetV2 as the base model
+base_model = MobileNetV2(
+    weights = 'imagenet',
+    include_top = False,
+    input_shape = (224,224,3)
+)
+
+#freeze the base model
+base_model.trainable = False
+
+#add custom layer on top of base model
+x = base_model.output
+x = GlobalAveragePooling2D()(x)
+x = Dense(1024,activation = 'relu')(x)
+x = Dropout(0.5)(x)
+predictions = Dense(num_classes, activation = 'softmax')(x) #output layer
+
+#create the final model
+model = Model(inputs = base_model.input, outputs = predictions)
+
+#complie the model
+model.compile(optimizer = Adam(learning_rate = 0.0001),
+              loss = 'categorical_crossentropy',
+              metrics = ['accuracy'])
+#model summary
+model.summary()
+
+#train the model
+history = model.fit(
+    train_generator,
+    steps_per_epoch =  train_generator.samples  //batch_size,
+    validation_data = validation_generator,
+    validation_steps = validation_generator.samples  //batch_size,
+    epochs = 20
+)
+
+#evaluate the model - plotting the training and validation acc/loss
+plt.figure(figsize = (12,6))
+
+plt.subplot(1,2,1)
+plt.plot(history.history['accuracy'], label = 'training accuracy')
+plt.plot(history.history['val_accuracy'], label = 'validation accuracy')
+plt.title('Training and Validation Accuracy')
+plt.xlabel('Epochs')
+plt.ylabel('Accuracy')
+plt.legend()
+
+plt.subplot(1,2,2)
+plt.plot(history.history['loss'], label = 'training loss')
+plt.plot(history.history['val_loss'], label = 'validation loss')
+plt.title('Training and Validation loss')
+plt.xlabel('Epochs')
+plt.ylabel('Accuracy')
+plt.legend()
+
+plt.show()
+
+# eveluate of model on validation set (how well the model perform)
+val_loss, val_accuracy = model.evaluate(validation_generator)
+print(f'Validation Loss: {val_loss}')
+print(f'Validation Accuracy: {val_accuracy}')
+
+#save the model
+model.save('MCAR.keras')
+
+from google.colab import drive
+drive.mount('/content/drive')
+
+# how well it perform
+from tensorflow.keras.models import load_model
+from tensorflow.keras.preprocessing import image
+
+model = load_model('MCAR.keras')
+
+def predict_animal(image_path):
+  # Define target_size as a tuple
+  target_size = (224, 224)
+  img = image.load_img(image_path, target_size = target_size)  # Pass target_size as a keyword argument
+  img_array = image.img_to_array(img)
+  img_array = np.expand_dims(img_array, axis=0)
+  img_array /= 255.0  # Corrected: Divide by 255.0 for normalization
+
+  prediction = model.predict(img_array)
+  predicted_class = class_names[np.argmax(prediction)]
+
+  plt.imshow(img)
+  plt.title(f'Predicted: {predicted_class}')
+  plt.axis('off')
+  plt.show()
+
+os.listdir(os.path.join(path, "animals", "animals","parrot"))
+
+predict_animal(os.path.join("/kaggle/input/animal-image-dataset-90-different-animals/animals/animals/","parrot",'34f9668c8e.jpg')) # updated
+
